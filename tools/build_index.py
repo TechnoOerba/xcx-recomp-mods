@@ -6,8 +6,12 @@
 Two kinds of entry:
   mods/<id>/     a Lua mod hosted here (kind "lua")
   links/<id>.ini a game-file mod hosted elsewhere, such as GameBanana (kind "romfs"): the manager downloads the zip
-                 from its author's page, checks its SHA-256 and unpacks its romfs/ folder into mods/<id>/romfs/.
+                 or RAR from its author's page, checks its SHA-256 and unpacks its game files into mods/<id>/romfs/.
                  Other people's files are never copied into this repository.
+                 With download=manual (sites that allow downloads only from their own page, such as Nexus Mods)
+                 there is no url: the entry names the page to download from (page=) and the file's name (file=),
+                 the player downloads it there and picks it, and the manager checks it against sha256= and size=.
+                 Managers older than this field skip such entries (no url), so the index format stays 2.
 
 A package is mods/<id>/ with the files the game reads (mod.ini, main.lua) and info.ini, which only this list and the
 manager read. The checks follow the game's own loader (runtime/mod_package.c in xcx-recomp): the folder name equals
@@ -32,7 +36,8 @@ INFO_KEYS = {'description', 'author', 'license', 'homepage'}
 SOURCE_LIMIT = 65536
 MANIFEST_LIMIT = 4096
 LINKS = ROOT / 'links'
-LINK_KEYS = {'name', 'version', 'description', 'author', 'license', 'homepage', 'url', 'sha256', 'size', 'notes'}
+LINK_KEYS = {'name', 'version', 'description', 'author', 'license', 'homepage', 'url', 'sha256', 'size', 'notes',
+             'download', 'page', 'file'}
 SHA = re.compile(r'[0-9a-f]{64}\Z')
 HTTPS = re.compile(r'https://[^\s"<>]+\Z')
 ALLOWED_FILES = {'mod.ini', 'main.lua', 'info.ini', 'README.md', 'LICENSE', 'LICENSE.txt'}
@@ -101,21 +106,36 @@ def check_link(path):
     if not ID.match(mid):
         raise ValueError('file name is not a valid id (a-z first, then a-z 0-9 . _ -, at most 64)')
     m = read_kv(path, LINK_KEYS, 4096)
-    for need in ('name', 'version', 'description', 'author', 'homepage', 'url', 'sha256', 'size'):
+    manual = m.get('download') == 'manual'
+    if m.get('download') not in (None, 'manual'):
+        raise ValueError('download may only be manual')
+    link = ('page', 'file') if manual else ('url',)
+    for need in ('name', 'version', 'description', 'author', 'homepage', *link, 'sha256', 'size'):
         if not m.get(need):
             raise ValueError(f'needs {need}=')
+    if manual and m.get('url'):
+        raise ValueError('a download=manual entry has page= and file=, not url=')
+    if not manual and (m.get('page') or m.get('file')):
+        raise ValueError('page= and file= belong to download=manual entries')
     if len(m['name'].encode()) > 96 or len(m['version']) > 31:
         raise ValueError('name must be at most 96 bytes and version at most 31')
-    if not HTTPS.match(m['homepage']) or not HTTPS.match(m['url']):
-        raise ValueError('homepage and url must be https:// links')
+    if not HTTPS.match(m['homepage']) or not HTTPS.match(m['page' if manual else 'url']):
+        raise ValueError('homepage and ' + ('page' if manual else 'url') + ' must be https:// links')
+    if manual and ('/' in m['file'] or '\\' in m['file'] or len(m['file'].encode()) > 200):
+        raise ValueError('file must be the downloaded file\'s name, at most 200 bytes')
     if not SHA.match(m['sha256']):
         raise ValueError('sha256 must be 64 lowercase hex digits')
     if not m['size'].isdigit() or not 0 < int(m['size']) <= 4 << 30:
         raise ValueError('size must be the zip size in bytes')
-    return {'id': mid, 'kind': 'romfs', 'name': m['name'], 'version': m['version'], 'requires': [],
-            'description': m['description'], 'author': m['author'], 'license': m.get('license', ''),
-            'homepage': m['homepage'], 'url': m['url'], 'sha256': m['sha256'], 'size': int(m['size']),
-            'notes': m.get('notes', '')}
+    entry = {'id': mid, 'kind': 'romfs', 'name': m['name'], 'version': m['version'], 'requires': [],
+             'description': m['description'], 'author': m['author'], 'license': m.get('license', ''),
+             'homepage': m['homepage']}
+    if manual:
+        entry.update(download='manual', page=m['page'], file=m['file'])
+    else:
+        entry['url'] = m['url']
+    entry.update(sha256=m['sha256'], size=int(m['size']), notes=m.get('notes', ''))
+    return entry
 
 
 def build():

@@ -62,6 +62,28 @@ When the author uploads a new zip, update `url`, `sha256`, `size` and `version`.
 it to be shared or linked, and credit them as on their page. Run `python tools/build_index.py` and open a pull
 request.
 
+The archive may be a zip or a RAR. It need not have a `romfs/` folder: when the game folders (`bdat/`, `chr/`, ...)
+sit in a folder of their own, the manager finds them by the player's game files. Put the layout in `notes` when it
+is unusual.
+
+### Mods that can only be downloaded from their page
+
+Some sites, such as Nexus Mods, allow downloads only from the mod's own page, so there is no link the manager can
+download from. Such a mod is listed with `download=manual`, the page with the file (`page`) and the file's name as
+it downloads (`file`) instead of `url`:
+
+```ini
+download=manual
+page=https://www.nexusmods.com/xenobladechroniclesx/mods/10?tab=files&file_id=14
+file=all tweaks mod-10-1-0-1745514276.rar
+sha256=SHA-256 of that file, lowercase
+size=Its size in bytes
+```
+
+**Install** then tells the player to download that file from the page, opens the page on request, and asks for the
+downloaded file; it checks the file's size and SHA-256 before it unpacks anything. Download the file yourself to
+get both. Managers from before this change skip these entries.
+
 ## License
 
 The tooling is MIT. Each mod's license is its author's: see `info.ini` or the mod's own page.
