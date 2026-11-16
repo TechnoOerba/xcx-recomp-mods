@@ -36,10 +36,33 @@
      "file": "all tweaks mod-10-1-0-1745514276.rar",
      "sha256": "748d182bfe0b3e5b9afb472624445e77f4db10f984249f0f031f76e14daf4756",
      "size": 3479872,
+     "includes": [
+      "probe",
+      "treasure-sensor"
+     ]
+    },
+    {
+     "id": "probe",
+     "name": "Probe tweak",
+     "description": "Storage probes hold 10,000 instead of 3,000.",
+     "page": "https://www.nexusmods.com/xenobladechroniclesx/mods/10?tab=files&file_id=18",
+     "file": "probe tweak-10-1-0-1745514623.rar",
+     "sha256": "978da400ad513cc161a99fb1c883aa8eb418526114bf7679c7f628120bdf3e98",
+     "size": 3946,
+     "includes": []
+    },
+    {
+     "id": "treasure-sensor",
+     "name": "Treasure sensor up",
+     "description": "Treasure sensor augments are stronger: two of the best reach the highest drop chance.",
+     "page": "https://www.nexusmods.com/xenobladechroniclesx/mods/10?tab=files&file_id=21",
+     "file": "treasure sensor up-10-1-0-1745514745.rar",
+     "sha256": "1932a17d391b97b3205628c767bc2a31a67b3f6072c71b9340db5ebb45d1d42b",
+     "size": 107707,
      "includes": []
     }
    ],
-   "notes": "Nexus Mods allows downloads only from its own page, so Install opens the page and asks for the files you downloaded. \"All tweaks\" replaces the whole common.bdat and the English common_ms.bdat, so it cannot be on together with another mod that replaces them (such as Cut Content Restoration). Changes data loaded at boot: restart the game after turning a part on or off."
+   "notes": "Nexus Mods allows downloads only from its own page, so Install opens the page and asks for the files you downloaded. Take All tweaks, or only the options you want. All tweaks is a whole common.bdat; the options are single bdat tables that the game merges into its own at start-up, which needs an XCX Recomp build with the bdat merge. Restart the game after turning a part on or off."
   },
   {
    "id": "hello",
