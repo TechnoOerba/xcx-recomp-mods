@@ -12,6 +12,10 @@ Two kinds of entry:
                  there is no url: the entry names the page to download from (page=) and the file's name (file=),
                  the player downloads it there and picks it, and the manager checks it against sha256= and size=.
                  Managers older than this field skip such entries (no url), so the index format stays 2.
+                 A mod that comes as several files (a full version and optional pieces, as on Nexus Mods) lists
+                 each as a part: part.<part>.name=, .description=, .file=/.page= or .url=, .sha256=, .size= and
+                 .includes= (the parts a part already contains). The manager installs each part the player picks
+                 as its own mod, <id>.<part>, grouped under the entry.
 
 A package is mods/<id>/ with the files the game reads (mod.ini, main.lua) and info.ini, which only this list and the
 manager read. The checks follow the game's own loader (runtime/mod_package.c in xcx-recomp): the folder name equals
@@ -38,6 +42,9 @@ MANIFEST_LIMIT = 4096
 LINKS = ROOT / 'links'
 LINK_KEYS = {'name', 'version', 'description', 'author', 'license', 'homepage', 'url', 'sha256', 'size', 'notes',
              'download', 'page', 'file'}
+PART_FIELDS = {'name', 'description', 'url', 'page', 'file', 'sha256', 'size', 'includes'}
+PART_KEY = re.compile(r'part\.([a-z][a-z0-9-]{0,31})\.([a-z0-9]+)\Z')
+LINK_LIMIT = 16384
 SHA = re.compile(r'[0-9a-f]{64}\Z')
 HTTPS = re.compile(r'https://[^\s"<>]+\Z')
 ALLOWED_FILES = {'mod.ini', 'main.lua', 'info.ini', 'README.md', 'LICENSE', 'LICENSE.txt'}
@@ -55,7 +62,8 @@ def read_kv(path, keys, limit):
         if not line or line.startswith('#'):
             continue
         key, sep, value = line.partition('=')
-        if not sep or key not in keys:
+        part = PART_KEY.match(key) if keys is LINK_KEYS else None
+        if not sep or key not in keys and not (part and part.group(2) in PART_FIELDS):
             raise ValueError(f'{path.name}: unknown or malformed line {line!r}')
         if key in out:
             raise ValueError(f'{path.name}: {key} appears twice')
@@ -101,40 +109,79 @@ def check_package(folder):
                       for p in sorted(folder.iterdir())]}
 
 
+def check_file_fields(m, manual, where):
+    """The download fields of an entry or a part: (page and file) or url, sha256 and size."""
+    link = ('page', 'file') if manual else ('url',)
+    for need in (*link, 'sha256', 'size'):
+        if not m.get(need):
+            raise ValueError(f'{where}needs {need}=')
+    if manual and m.get('url'):
+        raise ValueError(f'{where}a download=manual entry has page= and file=, not url=')
+    if not manual and (m.get('page') or m.get('file')):
+        raise ValueError(f'{where}page= and file= belong to download=manual entries')
+    if not HTTPS.match(m['page' if manual else 'url']):
+        raise ValueError(f'{where}' + ('page' if manual else 'url') + ' must be an https:// link')
+    if manual and ('/' in m['file'] or '\\' in m['file'] or len(m['file'].encode()) > 200):
+        raise ValueError(f'{where}file must be the downloaded file\'s name, at most 200 bytes')
+    if not SHA.match(m['sha256']):
+        raise ValueError(f'{where}sha256 must be 64 lowercase hex digits')
+    if not m['size'].isdigit() or not 0 < int(m['size']) <= 4 << 30:
+        raise ValueError(f'{where}size must be the file size in bytes')
+    out = {'page': m['page'], 'file': m['file']} if manual else {'url': m['url']}
+    out.update(sha256=m['sha256'], size=int(m['size']))
+    return out
+
+
 def check_link(path):
     mid = path.stem
     if not ID.match(mid):
         raise ValueError('file name is not a valid id (a-z first, then a-z 0-9 . _ -, at most 64)')
-    m = read_kv(path, LINK_KEYS, 4096)
+    m = read_kv(path, LINK_KEYS, LINK_LIMIT)
     manual = m.get('download') == 'manual'
     if m.get('download') not in (None, 'manual'):
         raise ValueError('download may only be manual')
-    link = ('page', 'file') if manual else ('url',)
-    for need in ('name', 'version', 'description', 'author', 'homepage', *link, 'sha256', 'size'):
+    for need in ('name', 'version', 'description', 'author', 'homepage'):
         if not m.get(need):
             raise ValueError(f'needs {need}=')
-    if manual and m.get('url'):
-        raise ValueError('a download=manual entry has page= and file=, not url=')
-    if not manual and (m.get('page') or m.get('file')):
-        raise ValueError('page= and file= belong to download=manual entries')
     if len(m['name'].encode()) > 96 or len(m['version']) > 31:
         raise ValueError('name must be at most 96 bytes and version at most 31')
-    if not HTTPS.match(m['homepage']) or not HTTPS.match(m['page' if manual else 'url']):
-        raise ValueError('homepage and ' + ('page' if manual else 'url') + ' must be https:// links')
-    if manual and ('/' in m['file'] or '\\' in m['file'] or len(m['file'].encode()) > 200):
-        raise ValueError('file must be the downloaded file\'s name, at most 200 bytes')
-    if not SHA.match(m['sha256']):
-        raise ValueError('sha256 must be 64 lowercase hex digits')
-    if not m['size'].isdigit() or not 0 < int(m['size']) <= 4 << 30:
-        raise ValueError('size must be the zip size in bytes')
+    if not HTTPS.match(m['homepage']):
+        raise ValueError('homepage must be an https:// link')
+    parts = {}
+    for key, value in m.items():
+        p = PART_KEY.match(key)
+        if p:
+            parts.setdefault(p.group(1), {})[p.group(2)] = value
     entry = {'id': mid, 'kind': 'romfs', 'name': m['name'], 'version': m['version'], 'requires': [],
              'description': m['description'], 'author': m['author'], 'license': m.get('license', ''),
              'homepage': m['homepage']}
     if manual:
-        entry.update(download='manual', page=m['page'], file=m['file'])
-    else:
-        entry['url'] = m['url']
-    entry.update(sha256=m['sha256'], size=int(m['size']), notes=m.get('notes', ''))
+        entry['download'] = 'manual'
+    if not parts:
+        entry.update(check_file_fields(m, manual, ''))
+        entry['notes'] = m.get('notes', '')
+        return entry
+    if any(m.get(k) for k in ('url', 'page', 'file', 'sha256', 'size')):
+        raise ValueError('an entry with parts has its url/page/file/sha256/size on each part, not at the top')
+    out = []
+    for pid, fields in parts.items():
+        where = f'part.{pid}: '
+        if not ID.match(f'{mid}.{pid}'):
+            raise ValueError(f'{where}{mid}.{pid} is longer than 64 characters')
+        if not fields.get('name') or len(fields['name'].encode()) > 96:
+            raise ValueError(f'{where}needs a name of 1 to 96 bytes')
+        part = {'id': pid, 'name': fields['name'], 'description': fields.get('description', '')}
+        part.update(check_file_fields(fields, manual, where))
+        includes = [i for i in fields.get('includes', '').split(',') if i]
+        bad = [i for i in includes if i not in parts or i == pid]
+        if bad:
+            raise ValueError(f'{where}includes names no other part: {", ".join(bad)}')
+        part['includes'] = includes
+        out.append(part)
+    if len({p['sha256'] for p in out}) != len(out):
+        raise ValueError('two parts have the same sha256')
+    entry['parts'] = out
+    entry['notes'] = m.get('notes', '')
     return entry
 
 
@@ -169,7 +216,15 @@ def build():
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument('--check', action='store_true', help='fail when index.json is out of date')
+    ap.add_argument('--part', nargs=2, metavar=('PART', 'FILE'),
+                    help='print the file=, sha256= and size= lines of a part from its downloaded FILE, and stop')
     args = ap.parse_args()
+    if args.part:
+        pid, path = args.part[0], Path(args.part[1])
+        data = path.read_bytes()
+        print(f'part.{pid}.file={path.name}\npart.{pid}.sha256={hashlib.sha256(data).hexdigest()}\n'
+              f'part.{pid}.size={len(data)}')
+        return 0
     index, errors = build()
     for e in errors:
         print(e, file=sys.stderr)

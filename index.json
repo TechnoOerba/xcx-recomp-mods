@@ -27,11 +27,19 @@
    "license": "",
    "homepage": "https://www.nexusmods.com/xenobladechroniclesx/mods/10",
    "download": "manual",
-   "page": "https://www.nexusmods.com/xenobladechroniclesx/mods/10?tab=files&file_id=14",
-   "file": "all tweaks mod-10-1-0-1745514276.rar",
-   "sha256": "748d182bfe0b3e5b9afb472624445e77f4db10f984249f0f031f76e14daf4756",
-   "size": 3479872,
-   "notes": "The \"all tweaks mod\" file. Nexus Mods allows downloads only from its own page, so Install opens the page and asks for the file you downloaded. It replaces the whole common.bdat and the English common_ms.bdat, so it cannot be on together with another mod that replaces them (such as Cut Content Restoration). Changes data loaded at boot: restart the game after turning it on or off."
+   "parts": [
+    {
+     "id": "all",
+     "name": "All tweaks",
+     "description": "Every tweak of the mod in one file.",
+     "page": "https://www.nexusmods.com/xenobladechroniclesx/mods/10?tab=files&file_id=14",
+     "file": "all tweaks mod-10-1-0-1745514276.rar",
+     "sha256": "748d182bfe0b3e5b9afb472624445e77f4db10f984249f0f031f76e14daf4756",
+     "size": 3479872,
+     "includes": []
+    }
+   ],
+   "notes": "Nexus Mods allows downloads only from its own page, so Install opens the page and asks for the files you downloaded. \"All tweaks\" replaces the whole common.bdat and the English common_ms.bdat, so it cannot be on together with another mod that replaces them (such as Cut Content Restoration). Changes data loaded at boot: restart the game after turning a part on or off."
   },
   {
    "id": "hello",
