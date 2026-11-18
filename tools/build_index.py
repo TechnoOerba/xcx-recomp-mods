@@ -1,7 +1,14 @@
-"""Checks every package under mods/ and writes index.json, the list the XCX Recomp mod manager downloads.
+"""Checks every package under mods/ and writes index.json and index-3.json, the lists the XCX Recomp mod managers
+download.
 
-    python tools/build_index.py           # check, then write index.json
-    python tools/build_index.py --check   # check, and fail when index.json is not up to date (CI)
+    python tools/build_index.py           # check, then write both lists
+    python tools/build_index.py --check   # check, and fail when either list is not up to date (CI)
+
+Two lists, so no manager is handed an entry it can't install:
+  index.json    format 2: the Lua mods and the game-file mods downloaded as one zip. XCX Setup up to 0.1.21 and the
+                game's own library list (its F1 Mods tab) read this one.
+  index-3.json  format 3: every entry, also those downloaded from their own page, in parts or as RAR. XCX Setup
+                after 0.1.21 reads this one.
 
 Two kinds of entry:
   mods/<id>/     a Lua mod hosted here (kind "lua")
@@ -11,11 +18,13 @@ Two kinds of entry:
                  With download=manual (sites that allow downloads only from their own page, such as Nexus Mods)
                  there is no url: the entry names the page to download from (page=) and the file's name (file=),
                  the player downloads it there and picks it, and the manager checks it against sha256= and size=.
-                 Managers older than this field skip such entries (no url), so the index format stays 2.
+                 Such entries are only in index-3.json.
                  A mod that comes as several files (a full version and optional pieces, as on Nexus Mods) lists
                  each as a part: part.<part>.name=, .description=, .file=/.page= or .url=, .sha256=, .size= and
                  .includes= (the parts a part already contains). The manager installs each part the player picks
-                 as its own mod, <id>.<part>, grouped under the entry.
+                 as its own mod, <id>.<part>, grouped under the entry. Entries in parts are only in index-3.json.
+                 archive=rar marks a url entry whose download is a RAR (the default is zip); those are only in
+                 index-3.json too, since the game's own list and older managers read zips alone.
 
 A package is mods/<id>/ with the files the game reads (mod.ini, main.lua) and info.ini, which only this list and the
 manager read. The checks follow the game's own loader (runtime/mod_package.c in xcx-recomp): the folder name equals
@@ -33,6 +42,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 MODS = ROOT / 'mods'
 INDEX = ROOT / 'index.json'
+INDEX3 = ROOT / 'index-3.json'
 ID = re.compile(r'[a-z][a-z0-9._-]{0,63}\Z')
 VERSION = re.compile(r'\d+\.\d+\.\d+\Z')
 MANIFEST_KEYS = {'id', 'api', 'language', 'version', 'name', 'requires'}
@@ -41,7 +51,7 @@ SOURCE_LIMIT = 65536
 MANIFEST_LIMIT = 4096
 LINKS = ROOT / 'links'
 LINK_KEYS = {'name', 'version', 'description', 'author', 'license', 'homepage', 'url', 'sha256', 'size', 'notes',
-             'download', 'page', 'file'}
+             'download', 'page', 'file', 'archive'}
 PART_FIELDS = {'name', 'description', 'url', 'page', 'file', 'sha256', 'size', 'includes'}
 PART_KEY = re.compile(r'part\.([a-z][a-z0-9-]{0,31})\.([a-z0-9]+)\Z')
 LINK_LIMIT = 16384
@@ -140,6 +150,8 @@ def check_link(path):
     manual = m.get('download') == 'manual'
     if m.get('download') not in (None, 'manual'):
         raise ValueError('download may only be manual')
+    if m.get('archive') not in (None, 'zip', 'rar'):
+        raise ValueError('archive may only be zip or rar')
     for need in ('name', 'version', 'description', 'author', 'homepage'):
         if not m.get(need):
             raise ValueError(f'needs {need}=')
@@ -157,6 +169,8 @@ def check_link(path):
              'homepage': m['homepage']}
     if manual:
         entry['download'] = 'manual'
+    if m.get('archive') == 'rar':
+        entry['archive'] = 'rar'
     if not parts:
         entry.update(check_file_fields(m, manual, ''))
         entry['notes'] = m.get('notes', '')
@@ -210,12 +224,25 @@ def build():
         for r in m['requires']:
             if r not in ids:
                 errors.append(f'mods/{m["id"]}: requires {r}, which is not in this repository')
-    return {'format': 2, 'mods': mods}, errors
+    return mods, errors
+
+
+def for_every_manager(entry):
+    """Whether an entry belongs in index.json too: one every manager installs, a Lua mod or a zip downloaded from its
+    url."""
+    return entry['kind'] == 'lua' or not (entry.get('download') or entry.get('parts') or entry.get('archive') == 'rar')
+
+
+def lists(mods):
+    """{path: text} of the two lists."""
+    dump = lambda data: json.dumps(data, indent=1, ensure_ascii=False) + '\n'
+    return {INDEX: dump({'format': 2, 'mods': [m for m in mods if for_every_manager(m)]}),
+            INDEX3: dump({'format': 3, 'mods': mods})}
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument('--check', action='store_true', help='fail when index.json is out of date')
+    ap.add_argument('--check', action='store_true', help='fail when index.json or index-3.json is out of date')
     ap.add_argument('--part', nargs=2, metavar=('PART', 'FILE'),
                     help='print the file=, sha256= and size= lines of a part from its downloaded FILE, and stop')
     args = ap.parse_args()
@@ -225,20 +252,22 @@ def main():
         print(f'part.{pid}.file={path.name}\npart.{pid}.sha256={hashlib.sha256(data).hexdigest()}\n'
               f'part.{pid}.size={len(data)}')
         return 0
-    index, errors = build()
+    mods, errors = build()
     for e in errors:
         print(e, file=sys.stderr)
     if errors:
         return 1
-    text = json.dumps(index, indent=1, ensure_ascii=False) + '\n'
+    out = lists(mods)
     if args.check:
-        if not INDEX.is_file() or INDEX.read_text(encoding='utf-8') != text:
-            print('index.json is out of date: run python tools/build_index.py and commit it', file=sys.stderr)
+        stale = [p.name for p, text in out.items() if not p.is_file() or p.read_text(encoding='utf-8') != text]
+        if stale:
+            print(f'{" and ".join(stale)} out of date: run python tools/build_index.py and commit', file=sys.stderr)
             return 1
-        print(f'{len(index["mods"])} mods checked, index.json up to date')
+        print(f'{len(mods)} mods checked, index.json and index-3.json up to date')
         return 0
-    INDEX.write_text(text, encoding='utf-8', newline='\n')
-    print(f'{len(index["mods"])} mods checked, index.json written')
+    for path, text in out.items():
+        path.write_text(text, encoding='utf-8', newline='\n')
+    print(f'{len(mods)} mods checked, index.json and index-3.json written')
     return 0
 
 
